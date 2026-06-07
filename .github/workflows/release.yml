@@ -1,0 +1,123 @@
+name: Release
+
+# Builds the gosh CLI and publishes a GitHub release whenever the `VERSION`
+# file changes on `main`. The release tag (`v<VERSION>`) is also what `go get`
+# / `go install ...@v<VERSION>` resolves for library consumers. If a release
+# for the current VERSION already exists, the job is a no-op, so it is safe to
+# run on every merge to `main`.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read VERSION
+        id: version
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::VERSION file is empty"
+            exit 1
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+            echo "::error::VERSION '$VERSION' is not a Go-compatible semver (vX.Y.Z[-prerelease])"
+            exit 1
+          fi
+          MAJOR="${VERSION%%.*}"
+          if [ "$MAJOR" -ge 2 ]; then
+            echo "::error::major version >= 2 requires the module path to become github.com/darylcecile/gosh/v${MAJOR}; update go.mod and import paths before releasing"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: v$VERSION"
+
+      - name: Check whether the release already exists
+        id: check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.11'
+          check-latest: true
+
+      - name: Build and test (release gate)
+        run: |
+          go build ./...
+          go test ./...
+
+      - name: Build cross-platform binaries
+        if: steps.check.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          LDFLAGS="-s -w -X 'main.version=gosh ${TAG}'"
+          targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+          for target in $targets; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            name="gosh_${TAG}_${GOOS}_${GOARCH}"
+            bin="gosh"
+            if [ "$GOOS" = "windows" ]; then bin="gosh.exe"; fi
+            echo "Building ${name}"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags "$LDFLAGS" -o "dist/${bin}" ./cmd/gosh
+            if [ "$GOOS" = "windows" ]; then
+              (cd dist && zip -q "${name}.zip" "$bin" && rm "$bin")
+            else
+              (cd dist && tar -czf "${name}.tar.gz" "$bin" && rm "$bin")
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -la dist
+
+      - name: Create GitHub release
+        if: steps.check.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            dist/*
+
+      - name: Summary
+        if: always()
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASED: ${{ steps.check.outputs.release }}
+        run: |
+          if [ "${RELEASED:-}" = "true" ]; then
+            echo "Published release ${TAG}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No release: ${TAG} already exists. Bump the VERSION file to release." >> "$GITHUB_STEP_SUMMARY"
+          fi
