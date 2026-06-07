@@ -2,6 +2,7 @@ package netcmd
 
 import (
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -161,5 +162,36 @@ func TestCurlPathPrefixRejectsEncodedTraversal(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("server was contacted %d times despite path-prefix refusals", hits.Load())
+	}
+}
+
+func TestRemoteFileNameRejectsDecodedPathSegments(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"http://example.test/files/report%2etxt", "report.txt"},
+		{"http://example.test/files/plain.txt", "plain.txt"},
+		{"http://example.test/files/..", "index.html"},
+		{"http://example.test/files/%2e%2e", "%2e%2e"},
+		{"http://example.test/files/%2e%2e%2fpwned", "%2e%2e%2fpwned"},
+		{"http://example.test/files/%2Fabsolute", "%2Fabsolute"},
+		{"http://example.test/files/%5cwindows", "%5cwindows"},
+		{"http://example.test/files/%00bad", "%00bad"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			u, err := url.Parse(tc.raw)
+			if err != nil {
+				t.Fatalf("parse URL: %v", err)
+			}
+			got := remoteFileName(u)
+			if got != tc.want {
+				t.Fatalf("remoteFileName(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+			if unsafeRemoteFileName(got) {
+				t.Fatalf("remoteFileName(%q) returned unsafe filename %q", tc.raw, got)
+			}
+		})
 	}
 }

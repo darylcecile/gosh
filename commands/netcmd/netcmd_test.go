@@ -73,6 +73,25 @@ func TestCurlOutputWritesSandboxFile(t *testing.T) {
 	}
 }
 
+func TestCurlRemoteNameDoesNotDecodePathSeparators(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "file-body")
+	}))
+	defer ts.Close()
+
+	res, sh := runNet(t, allowServer(ts), "curl -O "+ts.URL+"/files/%2e%2e%2fpwned")
+	if res.ExitCode != 0 || res.Stdout != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", res.ExitCode, res.Stdout, res.Stderr)
+	}
+	if got := readFile(t, sh, "/home/user/%2e%2e%2fpwned"); got != "file-body" {
+		t.Fatalf("safe remote-name file body = %q", got)
+	}
+	if f, err := sh.FS().Open("/home/pwned", os.O_RDONLY, 0); err == nil {
+		_ = f.Close()
+		t.Fatalf("curl -O decoded a path separator and wrote outside cwd")
+	}
+}
+
 func TestCurlIncludeHeadersAndHead(t *testing.T) {
 	var sawHEAD atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

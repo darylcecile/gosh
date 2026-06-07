@@ -612,13 +612,18 @@ func boundedBodyReader(r io.Reader, policy gosh.NetworkPolicy) io.Reader {
 
 func remoteFileName(u *url.URL) string {
 	base := pathpkg.Base(u.EscapedPath())
-	if base == "." || base == "/" || base == "" {
+	if unsafeRemoteFileName(base) {
 		return "index.html"
 	}
-	if decoded, err := url.PathUnescape(base); err == nil && decoded != "" && decoded != "." && decoded != "/" {
+	if decoded, err := url.PathUnescape(base); err == nil && !unsafeRemoteFileName(decoded) {
 		return decoded
 	}
 	return base
+}
+
+func unsafeRemoteFileName(name string) bool {
+	return name == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, '\x00')
 }
 
 type htmlCommand struct{ name string }
