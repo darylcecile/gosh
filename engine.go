@@ -375,6 +375,7 @@ func (s *Shell) dispatch(ctx context.Context, rs *runState, cmd Command, name st
 		fsys:     rs.fsys,
 		clock:    rs.clock,
 		governor: rs.governor,
+		network:  s.network,
 		exec:     s.subExec(rs),
 	}
 	return cmd.Run(ctx, cc)
@@ -408,6 +409,7 @@ func (s *Shell) subExec(rs *runState) func(ctx context.Context, args []string, s
 			fsys:     rs.fsys,
 			clock:    rs.clock,
 			governor: rs.governor,
+			network:  s.network,
 			exec:     s.subExec(rs),
 		}
 		return cmd.Run(ctx, cc)

@@ -108,8 +108,16 @@ type CommandContext struct {
 	fsys     FileSystem
 	clock    Clock
 	governor *Governor
+	network  NetworkPolicy
 	exec     func(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, cwd string) int
 }
+
+// Network returns the egress policy in force for this run. Network-aware
+// commands (e.g. curl) consult it to decide whether they may run at all
+// (NetworkPolicy.Enabled) and to validate each request against the configured
+// origin/method/path allow-lists and SSRF defenses (S17–S22). The zero value is
+// a deny-all policy.
+func (cc *CommandContext) Network() NetworkPolicy { return cc.network }
 
 // Cwd returns the command's current working directory as an absolute, cleaned
 // POSIX path.
