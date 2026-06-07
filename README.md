@@ -245,3 +245,12 @@ See [`docs/mcp.md`](./docs/mcp.md).
 - [`examples/`](./examples) — runnable programs: custom command, read-only knowledge base, in-memory overlay, and overlay-over-cwd
 - [`THREAT_MODEL.md`](./THREAT_MODEL.md) — security model, guarantees, and residual risks
 - [`PRD.md`](./PRD.md) / [`FEATURES.md`](./FEATURES.md) — product requirements & feature checklist
+
+---
+
+## License
+
+[Dazza Public License 1.0](./LICENSE) — © 2026 Daryl Cecile. You may use,
+modify, and distribute the library (including in closed-source applications);
+distributed modifications of the library itself must stay under this license
+with source available. See [`LICENSE`](./LICENSE) for the full text.

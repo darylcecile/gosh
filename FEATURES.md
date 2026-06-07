@@ -179,10 +179,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · 🔒 release-blocking (
 - [x] `govulncheck` + fuzz + import-allow-list green in CI
 - [x] All 🔒 S-requirements covered by tests
 - [x] Performance budget verified (sub-ms construction, no cold start)
-- [ ] License chosen (OQ6); semver **v1.0.0** — *pending repository owner: a license is a
-      legal/ownership decision and the `v1.0.0` tag is a release action, so neither is
-      imposed automatically. Everything else in this checklist is implemented, tested,
-      and documented; choose a `LICENSE` and tag `v1.0.0` to close this item.*
+- [x] License chosen (OQ6) — **Dazza Public License 1.0** (`LICENSE`). *The `v1.0.0`
+      tag remains a release action for the repository owner; everything in this checklist
+      is implemented, tested, and documented.*
 
 ---
 
