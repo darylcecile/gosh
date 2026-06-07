@@ -3,6 +3,8 @@ package textproc
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -53,6 +55,7 @@ func TestTextprocCommandsThroughShell(t *testing.T) {
 		{"xargs exec composition", nil, "printf 'a b c' | xargs -n 2 argv pre", "pre,a,b\npre,c\n", 0},
 		{"xargs replace", nil, "printf 'a\nb\n' | xargs -I{} argv X{}", "Xa\nXb\n", 0},
 		{"empty input", nil, "printf '' | sort", "", 0},
+		{"split sorted readback", nil, "printf 'a\nb\nc\n' | split -l 2 - p; sort /home/user/paa /home/user/pab", "a\nb\nc\n", 0},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -71,6 +74,76 @@ func TestTextprocCommandsThroughShell(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSplitWritesPieces(t *testing.T) {
+	t.Parallel()
+	read := func(fsys gosh.FileSystem, name string) string {
+		f, err := fsys.Open(name, os.O_RDONLY, 0)
+		if err != nil {
+			return "<missing>"
+		}
+		defer f.Close()
+		b, _ := io.ReadAll(f)
+		return string(b)
+	}
+
+	t.Run("by lines with suffixes", func(t *testing.T) {
+		t.Parallel()
+		fsys := gosh.NewInMemoryFS(gosh.NewVirtualClock(gosh.Epoch), 1<<20, 1<<24)
+		_ = fsys.MkdirAll("/home/user", 0o755)
+		sh := gosh.New(gosh.WithCommands(Commands()...), gosh.WithFS(fsys))
+		res, err := sh.Run(context.Background(), "printf 'a\nb\nc\n' | split -l 1 - p")
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("run failed: err=%v code=%d stderr=%q", err, res.ExitCode, res.Stderr)
+		}
+		for name, want := range map[string]string{
+			"/home/user/paa": "a\n",
+			"/home/user/pab": "b\n",
+			"/home/user/pac": "c\n",
+		} {
+			if got := read(fsys, name); got != want {
+				t.Fatalf("%s = %q, want %q", name, got, want)
+			}
+		}
+	})
+
+	t.Run("by bytes with suffix", func(t *testing.T) {
+		t.Parallel()
+		fsys := gosh.NewInMemoryFS(gosh.NewVirtualClock(gosh.Epoch), 1<<20, 1<<24)
+		_ = fsys.MkdirAll("/home/user", 0o755)
+		sh := gosh.New(gosh.WithCommands(Commands()...), gosh.WithFS(fsys))
+		res, err := sh.Run(context.Background(), "printf 'abcdefg' > /home/user/in; split -b 3 /home/user/in c")
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("run failed: err=%v code=%d stderr=%q", err, res.ExitCode, res.Stderr)
+		}
+		for name, want := range map[string]string{
+			"/home/user/caa": "abc",
+			"/home/user/cab": "def",
+			"/home/user/cac": "g",
+		} {
+			if got := read(fsys, name); got != want {
+				t.Fatalf("%s = %q, want %q", name, got, want)
+			}
+		}
+	})
+
+	t.Run("numeric suffixes and default prefix", func(t *testing.T) {
+		t.Parallel()
+		fsys := gosh.NewInMemoryFS(gosh.NewVirtualClock(gosh.Epoch), 1<<20, 1<<24)
+		_ = fsys.MkdirAll("/home/user", 0o755)
+		sh := gosh.New(gosh.WithCommands(Commands()...), gosh.WithFS(fsys))
+		res, err := sh.Run(context.Background(), "printf 'x\ny\n' | split -l 1 -d -")
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("run failed: err=%v code=%d stderr=%q", err, res.ExitCode, res.Stderr)
+		}
+		if got := read(fsys, "/home/user/x00"); got != "x\n" {
+			t.Fatalf("x00 = %q, want %q", got, "x\n")
+		}
+		if got := read(fsys, "/home/user/x01"); got != "y\n" {
+			t.Fatalf("x01 = %q, want %q", got, "y\n")
+		}
+	})
 }
 
 func TestCommandHelp(t *testing.T) {

@@ -570,16 +570,15 @@ func (o *OverlayFS) Rename(oldpath, newpath string) error {
 	if err := o.ensureParent(newpath); err != nil {
 		return err
 	}
-	newLower := !o.whiteoutedLocked(newpath) && o.existsLower(newpath)
+	// Clear any whiteout on the destination: the moved upper file now occupies
+	// newpath and legitimately shadows any lower entry of the same name. We must
+	// NOT re-add a whiteout here, or the file we just placed would be masked.
 	o.clearWhiteoutLocked(newpath)
 	if err := o.upper.Rename(oldpath, newpath); err != nil {
 		return err
 	}
 	if oldLower {
 		o.addWhiteoutLocked(oldpath)
-	}
-	if newLower {
-		o.addWhiteoutLocked(newpath)
 	}
 	return nil
 }

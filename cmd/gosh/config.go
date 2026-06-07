@@ -22,6 +22,10 @@ type cliConfig struct {
 	inlineScript    string
 	inlineSet       bool
 	cwd             string
+	cwdSet          bool
+	root            string
+	errexit         bool
+	noNetwork       bool
 	env             stringList
 	files           stringList
 	mounts          stringList
@@ -32,6 +36,7 @@ type cliConfig struct {
 	timeout         time.Duration
 	fullInternet    bool
 	allowPrivateIPs bool
+	jsonOutput      bool
 	showVersion     bool
 	showHelp        bool
 	args            []string
@@ -45,6 +50,10 @@ func parseArgs(args []string, stderr io.Writer) (cliConfig, error) {
 
 	fs.StringVar(&cfg.inlineScript, "c", "", "run inline Bash script")
 	fs.StringVar(&cfg.cwd, "cwd", "", "initial virtual working directory")
+	fs.StringVar(&cfg.root, "root", "", "mount HOSTDIR as a read-only overlay lower layer (reads real files, writes go to a discarded in-memory layer); use --root . for overlay-over-cwd")
+	fs.BoolVar(&cfg.errexit, "e", false, "exit on first command failure (set -e)")
+	fs.BoolVar(&cfg.errexit, "errexit", false, "exit on first command failure (set -e)")
+	fs.BoolVar(&cfg.noNetwork, "no-network", false, "assert no network egress (the default); errors if combined with network-enabling flags")
 	fs.Var(&cfg.env, "env", "seed environment variable KEY=VAL (repeatable)")
 	fs.Var(&cfg.files, "file", "load HOSTPATH into the in-memory FS at VPATH as HOSTPATH:VPATH (repeatable)")
 	fs.Var(&cfg.mounts, "mount", "unsupported placeholder for HOSTDIR:VPATH mounts")
@@ -55,6 +64,7 @@ func parseArgs(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.Var(&cfg.methods, "allow-method", "allow HTTP method for network commands (repeatable; default GET,HEAD)")
 	fs.BoolVar(&cfg.fullInternet, "dangerously-allow-full-internet", false, "DANGEROUS: allow unrestricted network egress")
 	fs.BoolVar(&cfg.allowPrivateIPs, "allow-private-ips", false, "allow network commands to reach private/loopback IPs (SSRF protection is on by default)")
+	fs.BoolVar(&cfg.jsonOutput, "json", false, "emit a single JSON object {stdout,stderr,exitCode} instead of streaming output")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.showHelp, "help", false, "print help and exit")
 
@@ -68,6 +78,9 @@ func parseArgs(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "c" {
 			cfg.inlineSet = true
+		}
+		if f.Name == "cwd" {
+			cfg.cwdSet = true
 		}
 	})
 	cfg.args = fs.Args()
@@ -110,6 +123,10 @@ Flags:
 	defaults := flag.NewFlagSet("usage", flag.ContinueOnError)
 	defaults.String("c", "", "run inline Bash script")
 	defaults.String("cwd", "", "initial virtual working directory")
+	defaults.String("root", "", "mount HOSTDIR as a read-only overlay lower layer (reads real files, writes discarded); use --root . for overlay-over-cwd")
+	defaults.Bool("e", false, "exit on first command failure (set -e)")
+	defaults.Bool("errexit", false, "exit on first command failure (set -e)")
+	defaults.Bool("no-network", false, "assert no network egress (the default); errors if combined with network-enabling flags")
 	defaults.Var(&stringList{}, "env", "seed environment variable KEY=VAL (repeatable)")
 	defaults.Var(&stringList{}, "file", "load HOSTPATH into the in-memory FS at VPATH as HOSTPATH:VPATH (repeatable)")
 	defaults.Var(&stringList{}, "mount", "currently unsupported; reserved for HOSTDIR:VPATH mounts")
@@ -119,6 +136,8 @@ Flags:
 	defaults.Var(&stringList{}, "allow-origin", "allow exact network origin (repeatable); SSRF-protected by default")
 	defaults.Var(&stringList{}, "allow-method", "allow HTTP method for network commands (repeatable)")
 	defaults.Bool("dangerously-allow-full-internet", false, "DANGEROUS: unrestricted network egress")
+	defaults.Bool("allow-private-ips", false, "allow network commands to reach private/loopback IPs (SSRF protection is on by default)")
+	defaults.Bool("json", false, "emit a single JSON object {stdout,stderr,exitCode} instead of streaming output")
 	defaults.Bool("version", false, "print version and exit")
 	defaults.Bool("help", false, "print help and exit")
 	defaults.SetOutput(w)
@@ -126,6 +145,8 @@ Flags:
 	fmt.Fprint(w, `
 Script sources are mutually exclusive by priority: -c, then SCRIPT_FILE, then
 stdin. --mount is intentionally documented but not implemented by this host CLI;
-use --file to seed trusted host files into the virtual filesystem.
+use --file to seed trusted host files into the virtual filesystem, or --root to
+mount a real directory read-only (writes are captured in a discarded in-memory
+overlay, never touching host disk).
 `)
 }

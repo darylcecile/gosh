@@ -22,7 +22,7 @@ import (
 
 // Commands returns the text-processing command set.
 func Commands() []gosh.Command {
-	names := []string{"grep", "egrep", "fgrep", "cut", "tr", "sort", "uniq", "wc", "head", "tail", "tac", "rev", "nl", "paste", "join", "comm", "column", "fold", "expand", "unexpand", "diff", "od", "strings", "xargs"}
+	names := []string{"grep", "egrep", "fgrep", "cut", "tr", "sort", "uniq", "wc", "head", "tail", "tac", "rev", "nl", "paste", "join", "comm", "column", "fold", "expand", "unexpand", "diff", "od", "strings", "xargs", "split"}
 	cmds := make([]gosh.Command, 0, len(names))
 	for _, name := range names {
 		n := name
@@ -77,6 +77,8 @@ func run(ctx context.Context, cc *gosh.CommandContext) int {
 		return cmdStrings(ctx, cc)
 	case "xargs":
 		return cmdXargs(ctx, cc)
+	case "split":
+		return cmdSplit(ctx, cc)
 	}
 	return 127
 }

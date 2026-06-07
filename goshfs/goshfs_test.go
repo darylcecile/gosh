@@ -244,3 +244,47 @@ func TestTraversalCorpus(t *testing.T) {
 		t.Fatalf("traversing relative symlink target accepted")
 	}
 }
+
+// TestOverlayFSRenameOverLowerFile is a regression test: renaming an upper file
+// onto a path that exists only in the lower layer must leave the destination
+// readable with the moved content (the upper file shadows the lower). A previous
+// bug re-added a whiteout on the destination after the rename, making it vanish.
+func TestOverlayFSRenameOverLowerFile(t *testing.T) {
+lower, upper := newFS(), newFS()
+writeFile(t, lower, "/target", "lower-original")
+over := NewOverlayFS(lower, upper)
+
+// Create a new file in the upper, then rename it onto the lower-backed path.
+writeFile(t, over, "/src", "moved-content")
+if err := over.Rename("/src", "/target"); err != nil {
+t.Fatalf("rename: %v", err)
+}
+if got := readFile(t, over, "/target"); got != "moved-content" {
+t.Fatalf("after rename-over-lower, /target = %q, want %q", got, "moved-content")
+}
+if _, err := over.Stat("/src"); !errors.Is(err, fs.ErrNotExist) {
+t.Fatalf("source should be gone after rename, got err=%v", err)
+}
+// The lower layer must be untouched.
+if got := readFile(t, lower, "/target"); got != "lower-original" {
+t.Fatalf("lower mutated: %q", got)
+}
+}
+
+// TestOverlayFSRenameOverLowerThenRemove verifies the destination can still be
+// deleted afterwards, restoring nothing (the lower stays masked).
+func TestOverlayFSRenameOverLowerThenRemove(t *testing.T) {
+lower, upper := newFS(), newFS()
+writeFile(t, lower, "/target", "lower-original")
+over := NewOverlayFS(lower, upper)
+writeFile(t, over, "/src", "moved")
+if err := over.Rename("/src", "/target"); err != nil {
+t.Fatal(err)
+}
+if err := over.Remove("/target"); err != nil {
+t.Fatalf("remove after rename: %v", err)
+}
+if _, err := over.Stat("/target"); !errors.Is(err, fs.ErrNotExist) {
+t.Fatalf("target should be gone, got %v", err)
+}
+}

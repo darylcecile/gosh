@@ -2,6 +2,8 @@ module github.com/darylcecile/gosh
 
 go 1.25.0
 
+toolchain go1.25.11
+
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/benhoyt/goawk v1.31.0

@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/darylcecile/gosh"
+	"github.com/darylcecile/gosh/goshfs"
 	"github.com/darylcecile/gosh/std"
 )
 
@@ -32,6 +35,10 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "gosh: --mount is not supported by this CLI yet; use --file HOSTPATH:VPATH")
 		return hostErrorExitCode
 	}
+	if cfg.noNetwork && (len(cfg.origins) > 0 || cfg.fullInternet) {
+		fmt.Fprintln(stderr, "gosh: --no-network conflicts with --allow-origin/--dangerously-allow-full-internet")
+		return hostErrorExitCode
+	}
 
 	sh, err := newShell(cfg)
 	if err != nil {
@@ -49,6 +56,9 @@ func runCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if source == sourceREPL {
 		return runREPL(sh, cfg, stdin, stdout, stderr)
+	}
+	if cfg.errexit {
+		script = "set -e\n" + script
 	}
 
 	runStdin := stdin
@@ -84,10 +94,37 @@ func newShell(cfg cliConfig) (*gosh.Shell, error) {
 		limits.MaxCommands = cfg.maxCommands
 	}
 
-	opts := []gosh.Option{gosh.WithEnv(env), gosh.WithFiles(files), gosh.WithLimits(limits)}
-	if cfg.cwd != "" {
-		opts = append(opts, gosh.WithCwd(cfg.cwd))
+	opts := []gosh.Option{gosh.WithEnv(env), gosh.WithLimits(limits)}
+
+	// Determine the virtual working directory. When mounting a host root, default
+	// the cwd to "/" (the mount point) unless the operator set --cwd explicitly,
+	// so that the mounted tree is visible at the shell's starting directory.
+	cwd := cfg.cwd
+	if cfg.root != "" && !cfg.cwdSet {
+		cwd = "/"
 	}
+	if cwd != "" {
+		opts = append(opts, gosh.WithCwd(cwd))
+	}
+
+	if cfg.root != "" {
+		// Overlay-over-cwd: a read-only host lower layer with an in-memory upper
+		// layer that captures (and ultimately discards) all writes. Seed --file
+		// entries into the upper so they remain available in overlay mode.
+		host, err := goshfs.NewHostReadOnlyFS(cfg.root)
+		if err != nil {
+			return nil, fmt.Errorf("mount --root %s: %w", cfg.root, err)
+		}
+		upper := gosh.NewInMemoryFS(gosh.NewVirtualClock(gosh.Epoch), limits.MaxFileBytes, limits.MaxTotalFSBytes)
+		if cwd != "" {
+			_ = upper.MkdirAll(cwd, 0o755)
+		}
+		seedUpper(upper, files)
+		opts = append(opts, gosh.WithFS(goshfs.NewOverlayFS(host, upper)))
+	} else {
+		opts = append(opts, gosh.WithFiles(files))
+	}
+
 	if len(cfg.origins) > 0 || cfg.fullInternet {
 		policy := gosh.NetworkPolicy{
 			AllowedOrigins:               append([]string(nil), cfg.origins...),
@@ -98,6 +135,32 @@ func newShell(cfg cliConfig) (*gosh.Shell, error) {
 		opts = append(opts, gosh.WithNetwork(policy))
 	}
 	return std.Shell(opts...), nil
+}
+
+// seedUpper writes the seed file map into an in-memory overlay upper layer,
+// creating parent directories. Mirrors the library's own seeding for --root mode.
+func seedUpper(upper *gosh.InMemoryFS, files map[string]string) {
+	for vpath, content := range files {
+		abs := vpath
+		if !strings.HasPrefix(abs, "/") {
+			abs = "/" + abs
+		}
+		_ = upper.MkdirAll(pathDir(abs), 0o755)
+		f, err := upper.Open(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			continue
+		}
+		_, _ = io.WriteString(f, content)
+		_ = f.Close()
+	}
+}
+
+func pathDir(p string) string {
+	i := strings.LastIndex(p, "/")
+	if i <= 0 {
+		return "/"
+	}
+	return p[:i]
 }
 
 type scriptSourceKind int
@@ -149,6 +212,37 @@ func runScript(sh *gosh.Shell, cfg cliConfig, script string, args []string, stdi
 		ctx, cancel = context.WithTimeout(ctx, cfg.timeout)
 		defer cancel()
 	}
+
+	if cfg.jsonOutput {
+		var outBuf, errBuf bytes.Buffer
+		res, err := sh.Run(ctx, script,
+			gosh.RunArgs(args...),
+			gosh.RunStdin(stdin),
+			gosh.RunStdout(&outBuf),
+			gosh.RunStderr(&errBuf),
+		)
+		exit := res.ExitCode
+		if err != nil {
+			if errBuf.Len() > 0 {
+				errBuf.WriteByte('\n')
+			}
+			errBuf.WriteString(err.Error())
+			exit = hostErrorExitCode
+		}
+		payload := struct {
+			Stdout   string `json:"stdout"`
+			Stderr   string `json:"stderr"`
+			ExitCode int    `json:"exitCode"`
+		}{outBuf.String(), errBuf.String(), exit}
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		if encErr := enc.Encode(payload); encErr != nil {
+			fmt.Fprintf(stderr, "gosh: encode json: %v\n", encErr)
+			return hostErrorExitCode
+		}
+		return exit
+	}
+
 	res, err := sh.Run(ctx, script,
 		gosh.RunArgs(args...),
 		gosh.RunStdin(stdin),
@@ -156,7 +250,8 @@ func runScript(sh *gosh.Shell, cfg cliConfig, script string, args []string, stdi
 		gosh.RunStderr(stderr),
 	)
 	if err != nil {
-		fmt.Fprintf(stderr, "gosh: %v\n", err)
+		// Typed gosh.Run errors already carry a "gosh:" prefix.
+		fmt.Fprintf(stderr, "%v\n", err)
 		return hostErrorExitCode
 	}
 	return res.ExitCode
