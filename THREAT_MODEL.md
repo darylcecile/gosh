@@ -157,6 +157,14 @@ Mitigation: `internal/importcheck` tests every first-party package and rejects `
 
 Residual caveat: this is a test-time guard, not a Go compiler rule; it also does not constrain third-party dependencies or external custom commands.
 
+### 5.10 Host directory mounts via `goshfs.NewHostReadOnlyFS` (overlay-over-cwd)
+
+Attack: an operator mounts a real host directory as the lower layer of an overlay (the `gosh --root DIR` CLI flag, or `goshfs.NewHostReadOnlyFS`), and a script tries to escape the mounted subtree to read arbitrary host files via `..`, symlinks, or absolute paths.
+
+Mitigation: `NewHostReadOnlyFS` canonicalizes `root` with `filepath.EvalSymlinks` once, then for every access maps the virtual path under `root`, fully resolves symlinks, and rejects (as `fs.ErrNotExist`) any path whose resolved real location escapes `root` (`filepath.Rel`-based containment). It is read-only: every mutation and every write-flagged `Open` returns `fs.ErrPermission`, and it is additionally wrapped in `NewReadOnlyFS` for defense in depth. Composed under `OverlayFS`, all script writes are captured in a discarded in-memory upper layer, so host disk is never modified (`goshfs/hostfs.go`, `cmd/gosh/run.go`).
+
+Residual caveat: the adapter resolves-then-opens in two steps, so it assumes the mounted tree is **not concurrently mutated by an untrusted host process** during execution (the sandboxed script itself can never write host disk, so it cannot win this race). It also cannot detect **hardlinks** inside `root` that point to inodes outside `root`, and directory listings (`ReadDir`/`Lstat`) reveal the *names* of escaping symlinks even though their contents stay unreadable. Operators must not mount directories writable by untrusted host processes or containing attacker-controlled hardlinks (`goshfs/hostfs.go`).
+
 ## 6. Residual risks and assumptions
 
 1. **In-process execution is not kernel isolation.** A Go runtime bug, panic outside guarded paths, extreme allocation, scheduler starvation, or unsafe dependency bug can affect the host process. Use containers, seccomp, cgroups, macOS sandboxing, gVisor, Firecracker, or another OS boundary for defense in depth and hostile multi-tenant workloads (`PRD.md` NG5/S14/S6.8; `limits.go`).
@@ -168,6 +176,7 @@ Residual caveat: this is a test-time guard, not a Go compiler rule; it also does
 7. **Network policy is only as safe as host configuration.** `DangerouslyAllowFullInternet` disables the origin allow-list and the SSRF defense; broad allowed origins/methods/path prefixes or an explicit `AllowPrivateIPs` opt-in weaken SSRF defenses (`network.go`, `commands/netcmd/netcmd.go`).
 8. **Side channels are out of scope.** Timing, cache, Spectre-class, memory-pressure, and same-process observation side channels are not eliminated by an in-process interpreter.
 9. **Script-visible error hygiene depends on all trusted code.** Core errors are virtualized and typed, but custom commands/FS implementations and third-party libraries may include host details unless wrapped carefully (`engine.go`, `errors.go`).
+10. **Host directory mounts are operator-gated and confined but not race-proof.** `goshfs.NewHostReadOnlyFS` (and `gosh --root`) confine reads to a symlink-resolved root and discard all writes into an in-memory overlay, but assume the mounted tree is not concurrently mutated by untrusted host processes and contains no attacker-controlled hardlinks escaping the root (`goshfs/hostfs.go`; §5.10).
 
 ## 7. Reporting security issues
 
