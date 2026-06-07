@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-const version = "gosh dev"
+// version is overridden at build time via -ldflags "-X 'main.version=gosh vX.Y.Z'".
+var version = "gosh dev"
 
 type stringList []string
 
