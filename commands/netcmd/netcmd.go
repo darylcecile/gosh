@@ -372,6 +372,9 @@ func parseAndValidateURL(raw string, policy gosh.NetworkPolicy, method string) (
 		if p == "" {
 			p = "/"
 		}
+		if hasEncodedTraversal(p) {
+			return nil, fmt.Errorf("path %s not allowed by NetworkPolicy", p)
+		}
 		ok := false
 		for _, prefix := range policy.AllowedPathPrefixes {
 			if strings.HasPrefix(p, prefix) {
@@ -426,8 +429,34 @@ func originOf(u *url.URL) string {
 	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
+// hasEncodedTraversal reports whether an escaped URL path contains dot-segments
+// or percent-encoded path separators. When AllowedPathPrefixes is configured as
+// a security boundary, such paths are rejected because a prefix like "/api" can
+// be satisfied by "/api/../admin" or "/api%2f..%2fadmin" while the upstream
+// server normalizes them to a disallowed path (S18).
+func hasEncodedTraversal(escapedPath string) bool {
+	lower := strings.ToLower(escapedPath)
+	if strings.Contains(lower, "%2e") || strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") {
+		return true
+	}
+	for _, seg := range strings.Split(escapedPath, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func policyTransport(policy gosh.NetworkPolicy) *http.Transport {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	// gosh grants egress only through explicit NetworkPolicy, never ambient host
+	// configuration. http.DefaultTransport carries Proxy=ProxyFromEnvironment, so
+	// a host HTTP_PROXY/HTTPS_PROXY would silently route egress (and any
+	// CredentialTransform-injected credentials) through an ambient proxy. When
+	// SSRF protection is on it would also let that proxy reach a target our
+	// DialContext never validated, defeating the resolve-then-dial-the-checked-IP
+	// invariant below. Disable proxying unconditionally.
+	tr.Proxy = nil
 	if shouldDenyPrivate(policy) {
 		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 		resolver := net.DefaultResolver
@@ -477,12 +506,74 @@ func shouldDenyPrivate(policy gosh.NetworkPolicy) bool {
 	return !policy.DangerouslyAllowFullInternet && !policy.AllowPrivateIPs
 }
 
+// forbiddenPrefixes enumerates IP ranges gosh refuses to dial when SSRF
+// protection is active, beyond what the standard netip.Addr.Is* predicates
+// classify. They cover IANA special-purpose registrations and cloud-metadata
+// endpoints that are otherwise reachable (RFC 1122, 6598, 6890, 5737, 3068,
+// 2544, plus reserved space), including Alibaba Cloud metadata
+// (100.100.100.200 in 100.64.0.0/10) and Oracle Cloud metadata (192.0.0.192 in
+// 192.0.0.0/24).
+var forbiddenPrefixes = []netip.Prefix{
+	// IPv4
+	netip.MustParsePrefix("0.0.0.0/8"),       // "this host on this network" (RFC 1122)
+	netip.MustParsePrefix("100.64.0.0/10"),   // CGNAT / shared address space (RFC 6598)
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments (RFC 6890)
+	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1 documentation (RFC 5737)
+	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2 documentation (RFC 5737)
+	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3 documentation (RFC 5737)
+	netip.MustParsePrefix("192.88.99.0/24"),  // 6to4 relay anycast, deprecated (RFC 3068/7526)
+	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking (RFC 2544)
+	netip.MustParsePrefix("240.0.0.0/4"),     // reserved / future use; incl. 255.255.255.255 broadcast
+	// IPv6
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64 (RFC 8215)
+	netip.MustParsePrefix("100::/64"),       // discard-only (RFC 6666)
+	netip.MustParsePrefix("2001:db8::/32"),  // documentation (RFC 3849)
+	netip.MustParsePrefix("2001::/32"),      // Teredo tunneling (RFC 4380)
+}
+
+// nat64WKP and sixToFour are IPv4-embedding IPv6 transition prefixes. A gateway
+// for these would translate the embedded IPv4 destination, so gosh extracts and
+// re-checks that IPv4 to prevent smuggling a forbidden target (e.g.
+// 64:ff9b::7f00:1 -> 127.0.0.1).
+var (
+	nat64WKP  = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour = netip.MustParsePrefix("2002::/16")
+)
+
+// embeddedIPv4 returns the IPv4 address embedded in a NAT64 well-known-prefix or
+// 6to4 IPv6 address, if applicable.
+func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
+	if !ip.Is6() {
+		return netip.Addr{}, false
+	}
+	b := ip.As16()
+	switch {
+	case nat64WKP.Contains(ip):
+		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	case sixToFour.Contains(ip):
+		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), true
+	}
+	return netip.Addr{}, false
+}
+
 func forbiddenIP(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsUnspecified() {
 		return true
 	}
-	return ip == netip.MustParseAddr("169.254.169.254") || ip == netip.MustParseAddr("fd00:ec2::254")
+	for _, p := range forbiddenPrefixes {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	if ip == netip.MustParseAddr("169.254.169.254") || ip == netip.MustParseAddr("fd00:ec2::254") {
+		return true
+	}
+	if embedded, ok := embeddedIPv4(ip); ok {
+		return forbiddenIP(embedded)
+	}
+	return false
 }
 
 func copyHeaders(dst, src http.Header) {
@@ -521,13 +612,18 @@ func boundedBodyReader(r io.Reader, policy gosh.NetworkPolicy) io.Reader {
 
 func remoteFileName(u *url.URL) string {
 	base := pathpkg.Base(u.EscapedPath())
-	if base == "." || base == "/" || base == "" {
+	if unsafeRemoteFileName(base) {
 		return "index.html"
 	}
-	if decoded, err := url.PathUnescape(base); err == nil && decoded != "" && decoded != "." && decoded != "/" {
+	if decoded, err := url.PathUnescape(base); err == nil && !unsafeRemoteFileName(decoded) {
 		return decoded
 	}
 	return base
+}
+
+func unsafeRemoteFileName(name string) bool {
+	return name == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, '\x00')
 }
 
 type htmlCommand struct{ name string }

@@ -562,9 +562,15 @@ func extractTarEntry(cc *gosh.CommandContext, tr *tar.Reader, hdr *tar.Header, d
 		}
 		return cc.FS().Symlink(linkTarget, target)
 	case tar.TypeLink:
-		linkAbs, _, err := safeArchivePath(cc, dest, hdr.Linkname)
+		linkAbs, linkClean, err := safeArchivePath(cc, dest, hdr.Linkname)
 		if err != nil {
 			return fmt.Errorf("%s: %w", hdr.Name, err)
+		}
+		// Reject hardlinks whose source path traverses a pre-existing symlink:
+		// FS.Link follows symlinks, so without this a hardlink could reference an
+		// inode reached by escaping the extraction destination (S4).
+		if err := rejectExistingSymlinkPath(cc, dest, linkAbs, linkClean); err != nil {
+			return err
 		}
 		if err := rejectExistingSymlinkPath(cc, dest, target, cleanName); err != nil {
 			return err

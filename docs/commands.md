@@ -113,7 +113,9 @@ all := std.Commands()                   // []gosh.Command — the full set
 | `tar` | tar archives, with traversal and decompression-bomb guards |
 
 Archive extraction is bounded: per-entry and total-size caps derived from your
-`Limits`, an entry-count ceiling, and rejection of absolute/`..` paths.
+`Limits`, an entry-count ceiling, and rejection of absolute/`..` paths. Symlink
+targets must stay inside the extraction destination, and writes or hardlinks are
+refused if any existing path component would traverse a symlink.
 
 ## Network (`commands/netcmd`)
 
@@ -125,4 +127,8 @@ Archive extraction is bounded: per-entry and total-size caps derived from your
 Network commands enforce the `NetworkPolicy` you supply via `WithNetwork`: only
 allow-listed origins, a method allow-list (GET/HEAD by default), redirect re-
 validation, response-size caps, and dial-time private/loopback/metadata-IP
-blocking (SSRF + DNS-rebinding defense). See [security.md](./security.md#network).
+blocking (SSRF + DNS-rebinding defense). Host `HTTP_PROXY` / `HTTPS_PROXY` are
+ignored; egress only follows explicit policy. If you use path prefixes, encoded
+traversal is refused before matching. `curl -O` keeps the remote filename as a
+safe basename so a URL cannot pick `../file` as the output path. See
+[security.md](./security.md#network).

@@ -123,16 +123,37 @@ Guarantees enforced at the egress boundary:
 
 - **Origin allow-list.** Empty list = nothing reachable. Each request's
   scheme/host/port must match exactly.
+- **Optional path narrowing.** `AllowedPathPrefixes` matches the escaped URL path
+  (for example `/v1/`). When prefixes are configured, gosh rejects `..` path
+  segments and encoded separators/dot segments (`%2e`, `%2f`, `%5c`) before the
+  prefix check so `/v1/../admin` or `/v1%2fadmin` cannot satisfy a narrower
+  allow-list.
 - **SSRF + DNS-rebinding defense (secure by default).** Connections to private,
-  loopback, link-local, unspecified, and cloud-metadata (`169.254.169.254`)
-  addresses are refused — checked at **dial time** against the resolved IP, and
-  **re-checked on every redirect hop**, so a hostname that resolves to an internal
-  IP cannot bypass it. This protection is ON for any policy that is not
-  `DangerouslyAllowFullInternet`, regardless of how the policy was built.
+  loopback, link-local, unspecified, multicast, cloud-metadata, and special-use
+  ranges are refused. This includes `169.254.169.254`, `fd00:ec2::254`, CGNAT
+  (`100.64.0.0/10`, including Alibaba metadata), IETF protocol assignments
+  (`192.0.0.0/24`, including Oracle metadata), benchmarking (`198.18.0.0/15`),
+  6to4 anycast (`192.88.99.0/24`), reserved IPv4 (`240.0.0.0/4`), and related
+  IPv6 special ranges. NAT64 well-known-prefix and 6to4 addresses are decoded
+  and their embedded IPv4 is checked too.
+- **DNS rebinding resistance.** Hostnames are resolved inside the policy transport;
+  every resolved IP is checked, then the transport dials the checked IP directly.
+  The same validation runs on every redirect hop.
+- **No ambient host proxy.** `HTTP_PROXY` / `HTTPS_PROXY` from the host
+  environment are ignored. Network traffic and injected credentials only follow
+  explicit `NetworkPolicy`, never ambient proxy configuration.
 - **Credential isolation.** `CredentialTransforms` run **outside** the sandbox at
   the egress boundary. Injected secrets are never visible to the script and
   override any script-supplied header of the same name.
 - **Response caps & redirect caps** bound memory and redirect chains.
+- **Safe remote filenames.** `curl -O` treats the URL-derived filename as a single
+  basename. Decoded `/`, `\`, NUL, `.`, and `..` are refused so a URL or redirect
+  cannot choose `../target` as the output path.
+
+SSRF protection is ON for any policy that is not `DangerouslyAllowFullInternet`,
+regardless of how the policy was built. If you need to reach a trusted internal
+test service, set both a narrow `AllowedOrigins` entry and `AllowPrivateIPs: true`;
+do not use `DangerouslyAllowFullInternet` for that case.
 
 Two narrow, loudly-named escape hatches — **never enable for untrusted scripts**:
 
@@ -140,6 +161,12 @@ Two narrow, loudly-named escape hatches — **never enable for untrusted scripts
 |---|---|
 | `AllowPrivateIPs` | opt **out** of the SSRF defense only (e.g. to reach a trusted intranet/test host). Origin allow-list still applies. |
 | `DangerouslyAllowFullInternet` | disables **both** the origin allow-list **and** the SSRF defense — unrestricted egress. |
+
+Residual network caveat: gosh recognizes the NAT64 well-known prefix
+(`64:ff9b::/96`) and 6to4 (`2002::/16`) for embedded-IPv4 checks. If your
+environment routes a private, network-specific NAT64 prefix from ordinary global
+IPv6 space, avoid allow-listing that prefix for untrusted scripts or enforce the
+translation boundary outside gosh.
 
 ## Builtins
 
