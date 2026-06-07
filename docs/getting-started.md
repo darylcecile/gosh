@@ -122,7 +122,31 @@ res, _ := sh.Run(ctx, `cat | wc -l`,
 
 `RunStdin` accepts a `string`, `[]byte`, or `io.Reader`.
 
-## 7. Reuse the shell
+## 7. Enable network deliberately
+
+Network commands are present in the standard bundle, but they refuse to run until
+you provide an explicit allow-list. Keep the policy narrow: exact origins, optional
+path prefixes, and only the HTTP methods the script needs.
+
+```go
+sh := std.Shell(gosh.WithNetwork(gosh.NetworkPolicy{
+	AllowedOrigins:      []string{"https://api.example.com"},
+	AllowedPathPrefixes: []string{"/v1/"},
+	AllowedMethods:      []string{"GET"},
+	MaxResponseBytes:    4 << 20,
+	MaxRedirects:        3,
+}))
+
+res, _ := sh.Run(ctx, `curl https://api.example.com/v1/status`)
+```
+
+By default, gosh still refuses private, loopback, link-local, cloud-metadata, and
+other special-use IP ranges even when their origin is allow-listed. Host proxy
+environment variables are ignored. Only use `AllowPrivateIPs` for a trusted
+internal test service, and avoid `DangerouslyAllowFullInternet` for untrusted
+scripts.
+
+## 8. Reuse the shell
 
 A `*Shell` owns one VFS and is meant to be **reused** across an agent session.
 Env, shell functions, and positional parameters reset each `Run`; the filesystem

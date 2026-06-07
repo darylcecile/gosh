@@ -111,9 +111,11 @@ gosh -allow-origin https://api.github.com \
      -c 'curl https://api.github.com/zen'
 ```
 
-SSRF protection (no private/loopback/metadata IPs) stays on unless you pass
-`-allow-private-ips`, and `-dangerously-allow-full-internet` removes both the
-allow-list and the SSRF defense. **Never** pass those for untrusted scripts.
+SSRF protection (no private/loopback/link-local/metadata/special-use IPs) stays
+on unless you pass `-allow-private-ips`, and `-dangerously-allow-full-internet`
+removes both the allow-list and the SSRF defense. Host proxy environment
+variables are ignored; egress only follows the CLI flags you pass. **Never** use
+the escape hatches for untrusted scripts.
 
 ## Structured (JSON) output
 
