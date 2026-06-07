@@ -19,21 +19,22 @@ func (l *stringList) Set(v string) error {
 }
 
 type cliConfig struct {
-	inlineScript string
-	inlineSet    bool
-	cwd          string
-	env          stringList
-	files        stringList
-	mounts       stringList
-	origins      stringList
-	methods      stringList
-	maxOutput    int64
-	maxCommands  int64
-	timeout      time.Duration
-	fullInternet bool
-	showVersion  bool
-	showHelp     bool
-	args         []string
+	inlineScript    string
+	inlineSet       bool
+	cwd             string
+	env             stringList
+	files           stringList
+	mounts          stringList
+	origins         stringList
+	methods         stringList
+	maxOutput       int64
+	maxCommands     int64
+	timeout         time.Duration
+	fullInternet    bool
+	allowPrivateIPs bool
+	showVersion     bool
+	showHelp        bool
+	args            []string
 }
 
 func parseArgs(args []string, stderr io.Writer) (cliConfig, error) {
@@ -53,6 +54,7 @@ func parseArgs(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.Var(&cfg.origins, "allow-origin", "allow exact network origin, e.g. https://example.com (repeatable)")
 	fs.Var(&cfg.methods, "allow-method", "allow HTTP method for network commands (repeatable; default GET,HEAD)")
 	fs.BoolVar(&cfg.fullInternet, "dangerously-allow-full-internet", false, "DANGEROUS: allow unrestricted network egress")
+	fs.BoolVar(&cfg.allowPrivateIPs, "allow-private-ips", false, "allow network commands to reach private/loopback IPs (SSRF protection is on by default)")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.showHelp, "help", false, "print help and exit")
 
@@ -114,7 +116,7 @@ Flags:
 	defaults.Int64("max-output-bytes", 0, "maximum cumulative script stdout+stderr bytes")
 	defaults.Int64("max-commands", 0, "maximum simple commands per run")
 	defaults.Duration("timeout", 0, "wall-clock timeout for script execution")
-	defaults.Var(&stringList{}, "allow-origin", "allow exact network origin (repeatable); sets DenyPrivateIPs")
+	defaults.Var(&stringList{}, "allow-origin", "allow exact network origin (repeatable); SSRF-protected by default")
 	defaults.Var(&stringList{}, "allow-method", "allow HTTP method for network commands (repeatable)")
 	defaults.Bool("dangerously-allow-full-internet", false, "DANGEROUS: unrestricted network egress")
 	defaults.Bool("version", false, "print version and exit")

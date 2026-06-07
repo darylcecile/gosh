@@ -24,7 +24,9 @@ func runNet(t *testing.T, policy gosh.NetworkPolicy, script string, opts ...gosh
 }
 
 func allowServer(ts *httptest.Server) gosh.NetworkPolicy {
-	return gosh.NetworkPolicy{AllowedOrigins: []string{ts.URL}, DenyPrivateIPs: false}
+	// httptest servers listen on loopback, so legitimately reaching them
+	// requires the explicit private-IP opt-in (SSRF protection is on by default).
+	return gosh.NetworkPolicy{AllowedOrigins: []string{ts.URL}, AllowPrivateIPs: true}
 }
 
 func readFile(t *testing.T, sh *gosh.Shell, name string) string {
@@ -128,7 +130,7 @@ func TestCurlRefusesDisallowedOriginWithoutConnecting(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	policy := gosh.NetworkPolicy{AllowedOrigins: []string{"http://allowed.invalid"}, DenyPrivateIPs: false}
+	policy := gosh.NetworkPolicy{AllowedOrigins: []string{"http://allowed.invalid"}, AllowPrivateIPs: true}
 	res, _ := runNet(t, policy, "curl "+ts.URL)
 	if res.ExitCode == 0 || !strings.Contains(res.Stderr, "origin") || hits.Load() != 0 {
 		t.Fatalf("exit=%d stderr=%q hits=%d", res.ExitCode, res.Stderr, hits.Load())
@@ -163,8 +165,10 @@ func TestCurlRefusesPathPrefixNotAllowed(t *testing.T) {
 	}
 }
 
-func TestCurlRefusesPrivateIPWhenPolicyRequires(t *testing.T) {
-	policy := gosh.NetworkPolicy{AllowedOrigins: []string{"http://127.0.0.1:9"}, DenyPrivateIPs: true}
+func TestCurlRefusesPrivateIPByDefault(t *testing.T) {
+	// No AllowPrivateIPs / DangerouslyAllowFullInternet: SSRF protection is on by
+	// default even though the loopback origin is explicitly allow-listed.
+	policy := gosh.NetworkPolicy{AllowedOrigins: []string{"http://127.0.0.1:9"}}
 	res, _ := runNet(t, policy, "curl http://127.0.0.1:9")
 	if res.ExitCode == 0 || !strings.Contains(res.Stderr, "forbidden private IP") {
 		t.Fatalf("exit=%d stderr=%q", res.ExitCode, res.Stderr)

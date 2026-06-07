@@ -34,15 +34,24 @@ type NetworkPolicy struct {
 	// They run outside the sandbox, are never visible to scripts, and override
 	// any script-supplied header of the same name (S21).
 	CredentialTransforms []func(*http.Request)
-	// DenyPrivateIPs, when true (the recommended default behavior callers
-	// should opt into), causes resolution to private, loopback, link-local, and
-	// cloud-metadata addresses to be refused even if an origin is allow-listed
-	// (S22). Stored as a pointer-free bool; the network command treats the
-	// secure behavior as default unless DangerouslyAllowFullInternet is set.
-	DenyPrivateIPs bool
-	// DangerouslyAllowFullInternet disables the origin allow-list and grants
-	// unrestricted egress. It exists for explicit, loudly-warned opt-in only and
-	// must never be enabled for untrusted scripts (S22).
+	// AllowPrivateIPs is a narrow, explicit opt-OUT of the SSRF defense. By
+	// default (the zero value, false) gosh refuses to connect to private,
+	// loopback, link-local, unspecified, and cloud-metadata addresses even when
+	// the origin is allow-listed — resolution is checked at dial time so DNS
+	// rebinding cannot bypass it, and the check is re-applied on every redirect
+	// hop (S22). Set AllowPrivateIPs to true ONLY when you deliberately need to
+	// reach an internal/loopback service (e.g. a trusted intranet host or a test
+	// server); never enable it for untrusted scripts that can choose URLs.
+	//
+	// Security-by-default note: SSRF protection is ON whenever the policy is not
+	// DangerouslyAllowFullInternet, regardless of how the policy was
+	// constructed. A host that merely sets AllowedOrigins is protected without
+	// having to remember an extra flag.
+	AllowPrivateIPs bool
+	// DangerouslyAllowFullInternet disables the origin allow-list AND the
+	// private-IP SSRF defense, granting unrestricted egress. It exists for
+	// explicit, loudly-warned opt-in only and must never be enabled for
+	// untrusted scripts (S22).
 	DangerouslyAllowFullInternet bool
 }
 

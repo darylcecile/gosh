@@ -50,10 +50,10 @@ type Limits struct {
 	// MaxArgvBytes caps the total byte size of a single command's argv.
 	MaxArgvBytes int64
 	// MaxExpandedWords caps the number of words produced by a single expansion
-	// (brace/glob/parameter expansion).
+	// (brace/glob/parameter expansion). Because globs expand into words, this
+	// limit also bounds the number of paths a single glob may match — there is
+	// no separate glob-match knob to misconfigure.
 	MaxExpandedWords int64
-	// MaxGlobMatches caps how many paths a single glob may match.
-	MaxGlobMatches int64
 	// MaxPipelineLength caps the number of stages in a single pipeline.
 	MaxPipelineLength int64
 	// MaxCmdSubstDepth caps command-substitution nesting depth.
@@ -84,7 +84,6 @@ func DefaultLimits() Limits {
 		MaxASTDepth:       500,
 		MaxArgvBytes:      1 << 20, // 1 MiB
 		MaxExpandedWords:  100_000,
-		MaxGlobMatches:    100_000,
 		MaxPipelineLength: 256,
 		MaxCmdSubstDepth:  64,
 
@@ -115,7 +114,6 @@ func (l Limits) withDefaults() Limits {
 		MaxASTDepth:         pick(l.MaxASTDepth, d.MaxASTDepth),
 		MaxArgvBytes:        pick(l.MaxArgvBytes, d.MaxArgvBytes),
 		MaxExpandedWords:    pick(l.MaxExpandedWords, d.MaxExpandedWords),
-		MaxGlobMatches:      pick(l.MaxGlobMatches, d.MaxGlobMatches),
 		MaxPipelineLength:   pick(l.MaxPipelineLength, d.MaxPipelineLength),
 		MaxCmdSubstDepth:    pick(l.MaxCmdSubstDepth, d.MaxCmdSubstDepth),
 		MaxFileBytes:        pick(l.MaxFileBytes, d.MaxFileBytes),

@@ -92,7 +92,7 @@ func newShell(cfg cliConfig) (*gosh.Shell, error) {
 		policy := gosh.NetworkPolicy{
 			AllowedOrigins:               append([]string(nil), cfg.origins...),
 			AllowedMethods:               upperList(cfg.methods),
-			DenyPrivateIPs:               !cfg.fullInternet,
+			AllowPrivateIPs:              cfg.allowPrivateIPs,
 			DangerouslyAllowFullInternet: cfg.fullInternet,
 		}
 		opts = append(opts, gosh.WithNetwork(policy))

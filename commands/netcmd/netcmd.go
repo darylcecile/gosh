@@ -469,8 +469,12 @@ func policyTransport(policy gosh.NetworkPolicy) *http.Transport {
 	return tr
 }
 
+// shouldDenyPrivate reports whether dial-time private/loopback/metadata IP
+// checks apply. SSRF protection is secure-by-default: it is ON unless the host
+// has either explicitly opted into reaching private IPs (AllowPrivateIPs) or
+// opted into unrestricted egress (DangerouslyAllowFullInternet).
 func shouldDenyPrivate(policy gosh.NetworkPolicy) bool {
-	return policy.DenyPrivateIPs && !policy.DangerouslyAllowFullInternet
+	return !policy.DangerouslyAllowFullInternet && !policy.AllowPrivateIPs
 }
 
 func forbiddenIP(ip netip.Addr) bool {
